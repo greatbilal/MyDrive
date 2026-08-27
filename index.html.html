@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bilal Drive Portal</title>
+  <!-- Google Identity Services -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <style>
+    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background: #0f172a; color: #f8fafc; padding: 24px; margin: 0; }
+    .container { max-width: 800px; margin: 0 auto; }
+    .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; padding-bottom: 16px; margin-bottom: 20px; }
+    h1 { font-size: 20px; margin: 0; color: #38bdf8; }
+    button { background: #2563eb; color: white; border: none; padding: 10px 18px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 14px; transition: 0.2s; }
+    button:hover { background: #1d4ed8; }
+    .btn-secondary { background: #334155; }
+    .btn-secondary:hover { background: #475569; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+    .file-item { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-bottom: 1px solid #334155; }
+    .file-item:last-child { border-bottom: none; }
+    .file-name { color: #38bdf8; text-decoration: none; font-weight: 500; font-size: 15px; }
+    .file-name:hover { text-decoration: underline; }
+    .file-meta { color: #94a3b8; font-size: 13px; }
+    input[type="file"] { margin-right: 10px; color: #cbd5e1; }
+    #status { margin-top: 12px; font-size: 14px; font-weight: 500; }
+    .status-ok { color: #4ade80; }
+    .status-err { color: #f87171; }
+    .status-load { color: #38bdf8; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <div class="header">
+    <h1>Bilal Drive Portal</h1>
+    <button id="auth-btn" onclick="login()">Sign In with Google</button>
+  </div>
+
+  <div id="app-section" style="display: none;">
+    <!-- Upload Section -->
+    <div class="card">
+      <h3 style="margin-top:0;">Upload to Drive</h3>
+      <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 10px;">
+        <input type="file" id="file-input">
+        <button onclick="uploadFile()">Upload File</button>
+      </div>
+      <div id="status"></div>
+    </div>
+
+    <!-- Files List Section -->
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <h3 style="margin:0;">Recent Files</h3>
+        <button class="btn-secondary" onclick="listFiles()" style="padding:6px 14px; font-size:13px;">Refresh List</button>
+      </div>
+      <div id="file-list">Loading files...</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const CLIENT_ID = '557464620498-ot6r0qkl4es9k21cqk6p6gcioagr129o.apps.googleusercontent.com';
+  const SCOPES = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly';
+  
+  let accessToken = null;
+  let tokenClient;
+
+  window.onload = () => {
+    tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: CLIENT_ID,
+      scope: SCOPES,
+      callback: (tokenResponse) => {
+        if (tokenResponse.error !== undefined) {
+          showStatus('Login Error: ' + tokenResponse.error, 'err');
+          return;
+        }
+        accessToken = tokenResponse.access_token;
+        document.getElementById('auth-btn').innerText = 'Connected';
+        document.getElementById('auth-btn').disabled = true;
+        document.getElementById('app-section').style.display = 'block';
+        listFiles();
+      }
+    });
+  };
+
+  function login() {
+    tokenClient.requestAccessToken({ prompt: 'consent' });
+  }
+
+  function showStatus(msg, type) {
+    const el = document.getElementById('status');
+    el.className = 'status-' + type;
+    el.innerText = msg;
+  }
+
+  // 1. Fetch & List Files via REST API
+  async function listFiles() {
+    const container = document.getElementById('file-list');
+    container.innerHTML = '<span class="status-load">Fetching files from Google Drive...</span>';
+
+    try {
+      const url = 'https://www.googleapis.com/drive/v3/files?pageSize=20&fields=files(id,name,mimeType,webViewLink,size)&orderBy=createdTime%20desc&q=trashed%3Dfalse';
+      const res = await fetch(url, {
+        headers: { 'Authorization': 'Bearer ' + accessToken }
+      });
+      const data = await res.json();
+
+      if (data.error) throw new Error(data.error.message);
+
+      if (!data.files || data.files.length === 0) {
+        container.innerHTML = '<p style="color:#94a3b8;">No files found.</p>';
+        return;
+      }
+
+      let html = '';
+      data.files.forEach(file => {
+        const sizeStr = file.size ? `${(file.size / 1024).toFixed(1)} KB` : 'Folder / Doc';
+        html += `
+          <div class="file-item">
+            <div>
+              <a class="file-name" href="${file.webViewLink}" target="_blank">${file.name}</a>
+            </div>
+            <span class="file-meta">${sizeStr}</span>
+          </div>`;
+      });
+      container.innerHTML = html;
+    } catch (err) {
+      container.innerHTML = `<span class="status-err">Error: ${err.message}</span>`;
+    }
+  }
+
+  // 2. Upload File via Multipart REST API
+  async function uploadFile() {
+    const fileInput = document.getElementById('file-input');
+    if (!fileInput.files.length) {
+      showStatus('Please select a file to upload.', 'err');
+      return;
+    }
+
+    const file = fileInput.files[0];
+    showStatus('Uploading ' + file.name + '...', 'load');
+
+    const metadata = {
+      name: file.name,
+      mimeType: file.type || 'application/octet-stream'
+    };
+
+    const formData = new FormData();
+    formData.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+    formData.append('file', file);
+
+    try {
+      const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + accessToken },
+        body: formData
+      });
+      const result = await res.json();
+
+      if (result.error) throw new Error(result.error.message);
+
+      if (result.id) {
+        showStatus('File uploaded successfully!', 'ok');
+        fileInput.value = '';
+        listFiles();
+      } else {
+        showStatus('Upload failed.', 'err');
+      }
+    } catch (err) {
+      showStatus('Upload Error: ' + err.message, 'err');
+    }
+  }
+</script>
+
+</body>
+</html>
